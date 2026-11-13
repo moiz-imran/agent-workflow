@@ -419,7 +419,8 @@ def rules(trial_dir, repo, ticket):
     return {
         "reader_used": bool(calls),
         "reviews_read_only": all(c["sandbox"] == "read-only" for c in calls if c.get("skill") == "review-rubric"),
-        "map_has_needs_builder": "NEEDS_BUILDER" in read(scratch / "map.md"),
+        # Small tasks skip the investigation map, so no map is "not applicable", not broken.
+        "map_has_needs_builder": ("NEEDS_BUILDER" in read(scratch / "map.md")) if (scratch / "map.md").exists() else None,
         "decisions_numbered": bool(re.search(r"(?m)^\W*D\d+\b", read(scratch / "decisions.md"))),
         "review_ledger": any("## Round" in f.read_text() for f in ledgers),
         "ledger_append_only": append_only,
@@ -440,7 +441,7 @@ def load_gate(trial_dir):
 # ---------- commands ----------
 
 def preflight(args):
-    """Check tools; with --live, check isolated auth with commands that don't call a model."""
+    """Check tools; with --live, check isolated auth with one tiny model call."""
     ok = True
     def say(good, what):
         nonlocal ok
@@ -459,9 +460,12 @@ def preflight(args):
             shutil.rmtree(tmp, ignore_errors=True)
             tmp.mkdir(parents=True)
             env = child_env(tmp, args, "preflight")
-            for argv in (["claude", "auth", "status"], ["codex", "login", "status"]):
-                r = subprocess.run(argv, env=env, cwd=tmp, capture_output=True, text=True, timeout=60)
-                say(r.returncode == 0, " ".join(argv) + " in the isolated environment")
+            # `claude auth status` passes with a mangled token, so make one tiny real call instead.
+            for argv in (["claude", "-p", "Reply with the word ok.", "--model", "haiku", "--max-turns", "1"],
+                         ["codex", "login", "status"]):
+                r = subprocess.run(argv, env=env, cwd=tmp, capture_output=True, text=True, timeout=120,
+                                   stdin=subprocess.DEVNULL)
+                say(r.returncode == 0, " ".join(argv[:2]) + " in the isolated environment")
             shutil.rmtree(tmp, ignore_errors=True)
     return ok
 
@@ -515,7 +519,9 @@ def report(args):
         if not values:
             return "–"
         mean = statistics.mean(values)
-        return f"{mean:.2f}" + (f" ({min(values):g}–{max(values):g})" if len(values) > 1 else "")
+        def num(v):
+            return f"{v:,.0f}" if abs(v) >= 100 else f"{v:.3g}"
+        return num(mean) + (f" ({num(min(values))}–{num(max(values))})" if len(values) > 1 else "")
 
     review = [r for r in rows if r["kind"] == "review"]
     if review:
@@ -555,7 +561,7 @@ def report(args):
         wf = [r for r in task if r["arm"] == "workflow" and r.get("rules")]
         if wf:
             checks = list(wf[0]["rules"])
-            md += ["## Workflow rules kept", "", "| Check | Kept | Broken | Couldn't tell |", "|---|---|---|---|"]
+            md += ["## Workflow rules kept", "", "| Check | Kept | Broken | N/A or couldn't tell |", "|---|---|---|---|"]
             for c in checks:
                 v = [r["rules"].get(c) for r in wf]
                 md.append(f"| {c} | {v.count(True)} | {v.count(False)} | {v.count(None)} |")

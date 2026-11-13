@@ -15,3 +15,4 @@ python3 __READER__ --brief <brief.md> --out <result.md> [--sandbox workspace-wri
 - The review gate is `python3 __GATE__`. The controller runs `python3 __GATE__ receipt --ticket __TICKET__` from the repo when the review is CLEAN.
 - The spec is SPEC.md. When you're done, commit and push with `git push origin main`.
 - No human is available during this run: record each decision you'd normally ask about in decisions.md with your reasoning, and continue.
+- Bash runs only commands that start with `python3` or `git`, one per call: no `&&`, `;`, pipes or `VAR=` prefixes. Use the Read, Glob and Grep tools to look at files.
