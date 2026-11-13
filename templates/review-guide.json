@@ -1,0 +1,47 @@
+{
+  "summary": "One paragraph: what changed and why.",
+  "base": "origin/main",
+  "order": [
+    {
+      "path": "src/documents/move.ts",
+      "why": "The new behaviour: moving a document keeps its followers.",
+      "decisions": [
+        "D1"
+      ]
+    },
+    {
+      "path": "src/documents/copy.ts",
+      "why": "Copying a document no longer copies its followers (F1)."
+    },
+    {
+      "path": "src/documents/move.test.ts",
+      "why": "Covers move with and without followers."
+    }
+  ],
+  "skim": [
+    {
+      "path": "src/documents/index.ts",
+      "why": "Export only."
+    }
+  ],
+  "decisions": {
+    "D1": "Don't notify followers when a document moves."
+  },
+  "checks": [
+    {
+      "cmd": "npm test",
+      "result": "pass"
+    }
+  ],
+  "pushback": [
+    {
+      "path": "src/documents/copy.ts",
+      "line": 31,
+      "what": "F1: copy inherited followers.",
+      "fixed": true
+    }
+  ],
+  "follow_ups": [
+    "Decide whether archiving should notify followers."
+  ]
+}

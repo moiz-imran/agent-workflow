@@ -1,0 +1,45 @@
+{
+  "summary": "Illustrative: text changes notify followers; moves and formatting do not; copies start without followers.",
+  "base": "HEAD",
+  "order": [
+    {
+      "path": "src/documents/copy.ts",
+      "why": "F1 repaired: copies start without followers.",
+      "decisions": []
+    },
+    {
+      "path": "src/documents/move.ts",
+      "why": "Moves retain followers without notifying.",
+      "decisions": [
+        "D1"
+      ]
+    },
+    {
+      "path": "src/documents/edit.ts",
+      "why": "Text edits notify; formatting does not.",
+      "decisions": [
+        "D2"
+      ]
+    }
+  ],
+  "skim": [],
+  "decisions": {
+    "D1": "Don't notify followers when a document moves.",
+    "D2": "Formatting-only edits don't notify."
+  },
+  "checks": [
+    {
+      "cmd": "npm test -- documents",
+      "result": "illustrative pass; not executed"
+    }
+  ],
+  "pushback": [
+    {
+      "path": "src/documents/copy.ts",
+      "line": 42,
+      "what": "F1: copy inherited followers.",
+      "fixed": true
+    }
+  ],
+  "follow_ups": []
+}
