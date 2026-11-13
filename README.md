@@ -73,6 +73,16 @@ Ask Claude Code for something real, for example: *"Moving a document shouldn't l
 
 [`examples/document-followers/`](examples/document-followers/) shows what each of those files looks like for the talk's example.
 
+## Evaluate it
+
+[`eval/`](eval/README.md) measures the workflow on small fictional repos: whether review catches planted bugs, whether the full workflow beats one agent on the same tasks (hidden tests, time, tokens, new lint issues), and whether the agents kept the rules. Start with fake agents, which cost nothing:
+
+```sh
+python3 -B eval/run.py run --suite all --repeats 2
+```
+
+Then see [eval/README.md](eval/README.md) to run it with real agents.
+
 ## What the gate does and doesn't do
 
 - It blocks the literal commands `git push` and `gh pr create` run through Claude Code's Bash tool, in repos you've opted in. It follows `cd`, `git -C` and leading `VAR=value`.

@@ -1,0 +1,7 @@
+{
+  "findings": [],
+  "covered": [
+    "app.py"
+  ],
+  "not_covered": []
+}

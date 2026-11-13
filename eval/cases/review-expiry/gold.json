@@ -1,0 +1,18 @@
+[
+  {
+    "id": "G1",
+    "path": "app.py",
+    "start_line": 2,
+    "end_line": 2,
+    "severity": "Should-fix",
+    "what": "Entry survives at the exact expiration boundary."
+  },
+  {
+    "id": "G2",
+    "path": "notes.py",
+    "start_line": 1,
+    "end_line": 1,
+    "severity": "Optional",
+    "what": "New helper module lacks its advisory module docstring."
+  }
+]

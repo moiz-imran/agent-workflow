@@ -1,0 +1,16 @@
+{
+  "findings": [
+    {
+      "path": "app.py",
+      "start_line": 4,
+      "end_line": 4,
+      "severity": "Blocking",
+      "title": "Exact stock reservations are rejected.",
+      "evidence": "Exact stock reservations are rejected."
+    }
+  ],
+  "covered": [
+    "app.py"
+  ],
+  "not_covered": []
+}

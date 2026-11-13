@@ -1,0 +1,4 @@
+{
+  "kind": "review",
+  "summary": "Document operations return notification recipients for moves and saves."
+}

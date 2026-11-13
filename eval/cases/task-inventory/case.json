@@ -1,0 +1,5 @@
+{
+  "kind": "task",
+  "summary": "Reserve integer inventory atomically. Inputs are integers; remaining is nonnegative.",
+  "grade": "python3 -B -m unittest discover -s tests_hidden -v"
+}

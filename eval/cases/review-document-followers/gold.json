@@ -1,0 +1,10 @@
+[
+  {
+    "id": "G1",
+    "path": "app.py",
+    "start_line": 2,
+    "end_line": 2,
+    "severity": "Blocking",
+    "what": "Copy inherits and aliases the original followers."
+  }
+]

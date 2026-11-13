@@ -1,0 +1,25 @@
+{
+  "findings": [
+    {
+      "path": "app.py",
+      "start_line": 2,
+      "end_line": 2,
+      "severity": "Should-fix",
+      "title": "Entry survives at the exact expiration boundary.",
+      "evidence": "Entry survives at the exact expiration boundary."
+    },
+    {
+      "path": "notes.py",
+      "start_line": 1,
+      "end_line": 1,
+      "severity": "Optional",
+      "title": "Missing advisory module docstring",
+      "evidence": "notes.py starts with an assignment, without the advisory module documentation."
+    }
+  ],
+  "covered": [
+    "app.py",
+    "notes.py"
+  ],
+  "not_covered": []
+}

@@ -1,0 +1,4 @@
+{
+  "kind": "review",
+  "summary": "Reserve integer inventory atomically. Inputs are integers; remaining is nonnegative."
+}

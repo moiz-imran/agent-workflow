@@ -1,0 +1,25 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["findings", "covered", "not_covered"],
+  "properties": {
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "start_line", "end_line", "severity", "title", "evidence"],
+        "properties": {
+          "path": { "type": "string" },
+          "start_line": { "type": "integer" },
+          "end_line": { "type": "integer" },
+          "severity": { "type": "string", "enum": ["Blocking", "Should-fix", "Optional"] },
+          "title": { "type": "string" },
+          "evidence": { "type": "string" }
+        }
+      }
+    },
+    "covered": { "type": "array", "items": { "type": "string" } },
+    "not_covered": { "type": "array", "items": { "type": "string" } }
+  }
+}

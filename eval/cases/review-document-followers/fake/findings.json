@@ -1,0 +1,16 @@
+{
+  "findings": [
+    {
+      "path": "app.py",
+      "start_line": 2,
+      "end_line": 2,
+      "severity": "Blocking",
+      "title": "Copy inherits and aliases the original followers.",
+      "evidence": "Copy inherits and aliases the original followers."
+    }
+  ],
+  "covered": [
+    "app.py"
+  ],
+  "not_covered": []
+}

@@ -1,0 +1,4 @@
+{
+  "kind": "review",
+  "summary": "A cache entry expires at or after its deadline (integer seconds)."
+}
