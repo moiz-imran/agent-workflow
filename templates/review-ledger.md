@@ -1,6 +1,6 @@
 # Review ledger: <repo> (<ticket>)
 
-## Round 1, <date time>
+## Round 1, <date time>: full | delta
 
 - Checkout: `<absolute path>`. Base `<sha>`, HEAD `<sha>`, snapshot tree `<sha>`.
 - Scope: <paths>. Excluded: <paths and why>.

@@ -116,9 +116,35 @@ def gated_operations(command, cwd):
     return found
 
 
+ROUND = re.compile(r"^## Round\b.*$", re.M | re.I)
+
+
+def ledger_problem(text, tree):
+    """Why a review ledger can't back a CLEAN receipt for tree, or None."""
+    heads = ROUND.findall(text)
+    if not heads:
+        return "the ledger has no '## Round' sections"
+    for h in heads:
+        if not re.search(r"\b(full|delta)\b", h, re.I):
+            return f"round heading is not labelled full or delta: {h}"
+    if not re.search(r"\bfull\b", heads[-1], re.I):
+        return f"the last round must be a full review: {heads[-1]}"
+    if tree[:12] not in text[text.rindex(heads[-1]):]:
+        return f"the last full round does not record snapshot tree {tree[:12]}"
+    return None
+
+
 def receipt(ticket):
     cwd = os.getcwd()
     repo, tree = repo_id(cwd), working_tree(cwd)
+    folder = SCRATCH / ticket
+    ledger = folder / f"{Path(git(cwd, 'rev-parse', '--show-toplevel')).name}-review-ledger.md"
+    ledgers = sorted(folder.glob("*-review-ledger.md"))
+    if not ledger.exists() and len(ledgers) == 1:
+        ledger = ledgers[0]  # ponytail: the ledger's repo name may differ from the checkout folder
+    why = ledger_problem(ledger.read_text(), tree) if ledger.exists() else f"no ledger at {ledger}"
+    if why:
+        sys.exit(f"No receipt: {why}. Label every round full or delta and end with a full review of this tree.")
     RECEIPTS.mkdir(parents=True, exist_ok=True)
     receipt_path(repo, tree).write_text(json.dumps({
         "ticket": ticket, "repo": repo, "tree": tree, "head": git(cwd, "rev-parse", "HEAD"),
@@ -170,7 +196,7 @@ def changed_files(cwd, base):
         out = git(cwd, "diff", "--cached", "-M", "--name-status", "-z", base, "--", env=env).split("\0")
         files, i = {}, 0
         while i < len(out) and out[i]:
-            status, paths = out[i], out[i + 1:i + (3 if out[i][0] in "RC" else 2)]
+            paths = out[i + 1:i + (3 if out[i][0] in "RC" else 2)]
             i += 1 + len(paths)
             files[paths[-1]] = subprocess.run(
                 ["git", "-C", str(cwd), "diff", "--cached", "-M", base, "--", *paths],
@@ -336,6 +362,11 @@ def selftest():
     log = "# t\nD1. old\nD2. SUPERSEDED: was A\nD2. now B\n  because C\n"
     assert parse_decisions(log) == {"D1": "old", "D2": "now B because C"}
     assert TICKET.fullmatch("DOC-142") and not TICKET.fullmatch("../x")
+    t = "abcdef1234567890"
+    assert ledger_problem("## Round 1, d: full\n## Round 2, d: delta\n## Round 3, d: full\ntree abcdef123456\n", t) is None
+    assert "not labelled" in ledger_problem("## Round 1\ntree abcdef123456\n", t)
+    assert "last round" in ledger_problem("## Round 1: full\n## Round 2: delta abcdef123456\n", t)
+    assert "snapshot" in ledger_problem("## Round 1: full\ntree 000\n", t)
     print("ok")
 
 

@@ -59,7 +59,9 @@ def main():
     if workflow:
         command(sys.executable, str(EVAL / "reader.py"), "--brief", str(scratch / "brief.md"),
                 "--out", str(scratch / "review.md"), "--skill", "review-rubric")
-        (scratch / "repo-review-ledger.md").write_text("## Round 1\nFake transport review: CLEAN.\n")
+        command("git", "add", "-A")
+        tree = subprocess.run(["git", "write-tree"], capture_output=True, text=True, check=True).stdout.strip()
+        (scratch / "repo-review-ledger.md").write_text(f"## Round 1, fake: full\nSnapshot tree {tree}. Fake transport review: CLEAN.\n")
         (scratch / "outcomes.csv").write_text(f"2000-01-01,{ticket},repo,1,fake,0,0,0,0,0,CLEAN,,\n")
         if mode != "push_without_receipt":
             command(sys.executable, "-I", str(gate), "receipt", "--ticket", ticket)

@@ -57,6 +57,27 @@ class GateTests(unittest.TestCase):
         finally:
             os.chdir(previous)
 
+    def reviewed(self):
+        """Write a ledger whose last full round names the current tree, then take the receipt."""
+        previous = os.getcwd()
+        try:
+            os.chdir(self.repo)
+            tree = self.g.working_tree(self.repo)
+        finally:
+            os.chdir(previous)
+        folder = self.g.SCRATCH / "EXAMPLE"
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "one-review-ledger.md").write_text(f"## Round 1, t: full\nSnapshot tree {tree}.\n")
+        self.call(self.g.receipt, "EXAMPLE")
+
+    def test_receipt_needs_a_final_full_round(self):
+        folder = self.g.SCRATCH / "EXAMPLE"
+        folder.mkdir(parents=True)
+        (folder / "one-review-ledger.md").write_text("## Round 1, t: full\n## Round 2, t: delta\n")
+        with self.assertRaises(SystemExit):
+            self.call(self.g.receipt, "EXAMPLE")
+        self.assertFalse(self.g.RECEIPTS.exists())
+
     def hook(self, repo=None, command="git push"):
         payload = {"tool_name": "Bash", "cwd": str(repo or self.repo),
                    "tool_input": {"command": command}}
@@ -74,7 +95,7 @@ class GateTests(unittest.TestCase):
     def test_exact_snapshot_then_changed_commit(self):
         self.opt_in()
         (self.repo / "file.txt").write_text("reviewed\n")
-        self.call(self.g.receipt, "EXAMPLE")
+        self.reviewed()
         self.commit(self.repo)
         self.assertEqual(self.hook(), "")
         (self.repo / "file.txt").write_text("changed\n")
@@ -83,13 +104,13 @@ class GateTests(unittest.TestCase):
 
     def test_documented_head_only_limit(self):
         self.opt_in()
-        self.call(self.g.receipt, "EXAMPLE")
+        self.reviewed()
         self.assertEqual(self.hook(command="git push origin alternate-ref"), "")
         (self.repo / "file.txt").write_text("uncommitted\n")
         self.assertEqual(self.hook(), "")  # Only committed HEAD is checked.
 
     def test_identity(self):
-        self.call(self.g.receipt, "EXAMPLE")
+        self.reviewed()
         other = self.make_repo("two")
         self.opt_in(other)
         self.assertEqual(self.git(self.repo, "rev-parse", "HEAD^{tree}"), self.git(other, "rev-parse", "HEAD^{tree}"))
