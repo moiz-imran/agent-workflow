@@ -1,0 +1,5 @@
+{
+  "kind": "task",
+  "summary": "API-created invoices need a purchase-order number; reconciled invoices have none and must keep working.",
+  "grade": "python3 -B -m unittest discover -s tests_hidden -v"
+}

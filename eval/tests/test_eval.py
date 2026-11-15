@@ -19,7 +19,7 @@ import reader  # noqa: E402
 def options():
     return argparse.Namespace(live=False, max_reader_calls=12, codex_effort='medium',
                               codex_model=None, claude_model='fake', claude_effort='medium',
-                              max_turns=10, minutes=1, quality_cmd=None, window=3)
+                              max_turns=10, minutes=1, quality_cmd=None, window=3, require_map=False)
 
 
 class EvalTests(unittest.TestCase):
@@ -39,6 +39,14 @@ class EvalTests(unittest.TestCase):
             argv = harness.agent_bin(provider, options())
             self.assertEqual(argv, [sys.executable, str(EVAL / 'fake_agent.py'), provider])
 
+    def test_usage_limit(self):
+        with tempfile.TemporaryDirectory() as d:
+            log = Path(d) / "x.jsonl"
+            log.write_text('{"result": "ok"}')
+            self.assertFalse(harness.hit_usage_limit(log))
+            log.write_text('{"result": "You hit your 5-hour limit, resets 2am"}')
+            self.assertTrue(harness.hit_usage_limit(Path(d) / "missing.jsonl", log))
+
     def test_score(self):
         g = dict(id='G1', path='app.py', start_line=10, end_line=10, severity='Blocking')
         f = {k: v for k, v in g.items() if k != 'id'}
@@ -50,6 +58,8 @@ class EvalTests(unittest.TestCase):
         self.assertEqual(harness.score_review([f], [])['unadjudicated'], 1)
         self.assertEqual(harness.score_review([], [])['caught'], 0)
         self.assertEqual(harness.score_review([f], [g, dict(g, id='G2')])['caught'], 1)
+        also = dict(g, also=[dict(path='other.py', start_line=1, end_line=5)])
+        self.assertEqual(harness.score_review([dict(f, path='other.py', start_line=4, end_line=4)], [also])['caught'], 1)
 
     def test_valid_findings(self):
         good = {'path': 'a.py', 'start_line': 2, 'end_line': 3, 'severity': 'Blocking', 'title': 't', 'evidence': 'e'}
@@ -222,10 +232,64 @@ class EvalTests(unittest.TestCase):
         self.assertEqual(list(output.parent.glob('*/logs/reader-*.pgid')), [])  # finished Reader calls leave no record
         self.assertTrue(list(output.parent.glob('*/logs/reader-1.jsonl')))
         rows = [json.loads(line) for line in output.read_text().splitlines()]
-        self.assertEqual(len(rows), 8)
+        kinds = [c['kind'] for c in harness.load_cases('all')]
+        self.assertEqual(len(rows), kinds.count('review') + 2 * kinds.count('task'))  # tasks run single and workflow
         self.assertTrue(all(r['status'] == 'ok' for r in rows), rows)
         self.assertTrue(all(r['tests']['solved'] for r in rows if r['kind'] == 'task'))
         self.assertIn('Fake agents', output.with_name('report.md').read_text())
+        judged = subprocess.run([sys.executable, '-B', str(EVAL / 'run.py'), 'judge', str(output.parent)],
+                                capture_output=True, text=True)
+        self.assertEqual(judged.returncode, 0, judged.stderr)
+        verdicts = [json.loads(line) for line in (output.parent / 'judge' / 'judge.jsonl').read_text().splitlines()]
+        self.assertTrue(verdicts and all(v['prefer'] == 'tie' for v in verdicts), verdicts)
+
+    def test_claude_result_sums_segments(self):
+        def seg(cost, out):
+            return json.dumps({'type': 'result', 'subtype': 'success', 'total_cost_usd': cost,
+                               'usage': {'output_tokens': out, 'service_tier': 'standard'}})
+        r = harness.claude_result('\n'.join([seg(1.0, 10), 'not json', seg(2.5, 5)]))
+        self.assertEqual((r['total_cost_usd'], r['usage'], r['segments']), (2.5, {'output_tokens': 15}, 2))
+        self.assertIsNone(harness.claude_result('{"type": "assistant"}'))
+
+    def test_arm_prompts(self):
+        case, trial, repo = self.fixture()
+        captured = {}
+        def fake_run(argv, cwd, env, stdin_text, timeout, out, err):
+            captured['system'] = argv[argv.index('--append-system-prompt') + 1]
+            Path(out).write_text('')
+            return 'ok', 0.0
+        for arm, require_map in (('review-only', False), ('workflow', True)):
+            t = self.root / arm
+            t.mkdir()
+            with patch.object(harness, 'run_proc', fake_run), patch.object(harness, 'grade', lambda *a: {}), \
+                    patch.object(harness, 'quality', lambda *a: {}), patch.object(harness, 'rules', lambda *a: {}):
+                harness.task_trial(case, arm, t, argparse.Namespace(**{**vars(options()), 'require_map': require_map}))
+            system = captured['system']
+            self.assertIn('How this evaluation wires the workflow', system)
+            self.assertNotIn('__', system.replace('__init__', ''))
+            if arm == 'review-only':
+                self.assertNotIn('map.md', system)
+                self.assertNotIn('decisions.md', system)
+            else:
+                self.assertIn('This task is not small', system)
+
+    def test_unblind(self):
+        v = {'A': [{'severity': 'blocking'}], 'B': [], 'prefer': 'A', 'why': 'x'}
+        self.assertEqual(harness.unblind(v, 'fwd')['prefer'], 'single')
+        self.assertEqual(harness.unblind(v, 'rev')['prefer'], 'workflow')
+        self.assertEqual(harness.unblind(v, 'rev')['workflow'], v['A'])
+        self.assertEqual(harness.unblind(dict(v, prefer='?'), 'fwd')['prefer'], 'tie')
+        self.assertEqual(harness.unblind(v, 'fwd', ('review-only', 'workflow'))['prefer'], 'review-only')
+        self.assertEqual(harness.TRIAL_DIR.match('task-a-review-only-2').groups(), ('task-a', 'review-only', '2'))
+        self.assertEqual(harness.parse_verdict('noise {"A": [], "B": [], "prefer": "B"} end')['prefer'], 'B')
+        self.assertIsNone(harness.parse_verdict('{"A": "x"}'))
+        self.assertIsNone(harness.parse_verdict('no json'))
+
+    def test_change_diff_includes_untracked(self):
+        case, trial, repo = self.fixture()
+        (repo / 'new_file.py').write_text('x = 1\n')
+        self.assertIn('new_file.py', harness.change_diff(repo))
+        self.assertEqual(harness.git(repo, 'status', '--short', '--', 'new_file.py'), '?? new_file.py')  # real index untouched
 
     def test_failure_recorded(self):
         case = next(c for c in harness.load_cases('review') if c['id'] == 'review-clean')

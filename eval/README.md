@@ -6,6 +6,12 @@ with a Builder that drives a Reader through `reader.py`. It measures hidden-test
 fail→pass and pass→pass, time, tokens, estimated cost, new lint issues and recorded
 workflow rules. The Reader uses the plain Codex CLI route.
 
+The `catalog-regions`, `invoice-po`, `book-series` and `note-moves` cases are harder: the
+defect sits in a module the ticket doesn't point at (a content fingerprint, a second writer,
+a storage mapper), or the spec replaces behaviour an existing public test still pins. Their
+hidden tests include ordinary valid input, so a fix that over-guards fails too. They are
+modelled on defects seen in real tickets, rebuilt as fictional stdlib code.
+
 Start offline, from the repository root:
 
 ```sh
@@ -54,6 +60,23 @@ finding indices. Current scoring reads this during a review trial; report alone
 does not rescore previously recorded results. Preserve the original outputs and
 recompute scoring explicitly when adjudicating an existing run.
 
+Hidden tests only check what a case's author thought to test. To compare the
+whole change, run the blind judge on finished task trials:
+
+```sh
+python3 -B eval/run.py judge --live /tmp/eval-results/<timestamp> [more result dirs]
+```
+
+For each case it diffs the single and workflow repos against `base` (`--arms review-only workflow` compares another pair; output then goes to `judge-<arm>-vs-<arm>/`), then asks a
+fresh Claude, with read-only tools on the pre-change code, to list real defects in
+diff A and diff B and say which it would merge. Each pair is judged twice with
+the labels swapped, so position bias shows up as disagreement. Trials that hit a
+usage limit or a harness error are skipped; result dirs from separate runs pair up
+by case and trial number. Output: `judge/judge.md` and `judge/judge.jsonl` in the
+first result dir. The judge's defects are claims, not ground truth: check the ones
+you cite. It is the same model family as the Builder, and larger diffs with more
+tests can read as more thorough. The prompt is `arms/judge.md`.
+
 Quality is secondary and never combined into one score. Ruff, when installed,
 counts new versus fixed issues by rule and path. `--quality-cmd 'your-command'`
 replaces it: the command runs in each repo root and must print a JSON list such as
@@ -78,3 +101,39 @@ general superiority. Fake transports approximate documented formats; they do not
 validate a real CLI installation. Hidden tests are only as good as their spec
 coverage. Rule artifacts and receipts demonstrate recorded steps, not independent
 reasoning quality or tamper resistance.
+
+## Results on a production codebase
+
+Five real backend tickets from a production-grade service, each replayed from the commit its
+original PR started from, with that PR author's tests visible. Each ticket was done once by a
+single Claude Opus agent and once by the full workflow.
+
+| | Single agent | Workflow |
+|---|---|---|
+| Blind judge preferred this diff (each pair judged twice, labels swapped) | 0 of 10 | **10 of 10** |
+| Blocking defects in the final diff, per the judge | 5–6 | **0** |
+| Fixed the bug the human reviewer caught on the real PR (hidden test) | 0 of 5 | **1 of 5**, plus 1 partial |
+| New lint issues | 0 | 0 |
+| Cost to reach a PR | 1× | 2.5× model cost, 4× time, plus about 4 Codex review calls per ticket |
+| Defects left for human review, QA or production | 5–6 Blocking | 0 Blocking |
+
+The cost row stops at the PR. The single agent's version is cheaper only until its defects
+surface: each Blocking defect it shipped is another review round, a follow-up fix or an
+incident, at human cost rather than model cost. This run didn't measure that downstream cost.
+On the same project in day-to-day use (11 tickets), the workflow's internal review caught 14 of the 17
+required issues found on its changes before a human saw the code.
+
+The workflow caught defects the original human reviewers never flagged. Three were checked by
+hand: new fields dropped by a mapper so new records never stored them, a field the ticket
+required never emitted, and a validation crash on documents a background job writes with a null
+ID. All three shipped in the single agent's version; none shipped in the workflow's.
+
+Static analysis saw no difference between the two. The defects are logic errors that only a
+review against the ticket finds.
+
+The run also exposed one weakness, now fixed in the review loop. On one ticket, each round found
+another malformed input and the Builder added a guard for each, until some valid inputs were
+rejected. Repairs that narrow input now have to prove ordinary input still passes.
+
+Five tickets, one trial each, judged by the same model family as the Builder: a case study, not a
+benchmark. The tickets are private; the harness and judge above are the ones that produced it.

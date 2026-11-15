@@ -75,7 +75,7 @@ Ask Claude Code for something real, for example: *"Moving a document shouldn't l
 
 ## Evaluate it
 
-[`eval/`](eval/README.md) measures the workflow on small fictional repos: whether review catches planted bugs, whether the full workflow beats one agent on the same tasks (hidden tests, time, tokens, new lint issues), and whether the agents kept the rules. Start with fake agents, which cost nothing:
+[`eval/`](eval/README.md) measures the workflow on small fictional repos: whether review catches planted bugs, whether the full workflow beats one agent on the same tasks (hidden tests, a blind A/B judge, time, tokens, new lint issues), and whether the agents kept the rules. It also has [results from five real tickets](eval/README.md#results-on-a-production-codebase). Start with fake agents, which cost nothing:
 
 ```sh
 python3 -B eval/run.py run --suite all --repeats 2

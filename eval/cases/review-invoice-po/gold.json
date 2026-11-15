@@ -1,0 +1,18 @@
+[
+  {
+    "id": "G1",
+    "path": "models.py",
+    "start_line": 25,
+    "end_line": 26,
+    "severity": "Blocking",
+    "what": "The PO rule is in the shared validator, so reconciled invoices (po_number None) fail in nightly_reconcile and make export_csv raise."
+  },
+  {
+    "id": "G2",
+    "path": "models.py",
+    "start_line": 4,
+    "end_line": 4,
+    "severity": "Should-fix",
+    "what": "PO-[1-9] rejects valid numbers with leading zeros such as PO-0042, which the spec says are kept as sent."
+  }
+]

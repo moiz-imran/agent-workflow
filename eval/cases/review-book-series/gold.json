@@ -1,0 +1,10 @@
+[
+  {
+    "id": "G1",
+    "path": "service.py",
+    "start_line": 51,
+    "end_line": 58,
+    "severity": "Blocking",
+    "what": "update_book never normalises tags, so a partial update stores them untrimmed, mixed-case and duplicated."
+  }
+]

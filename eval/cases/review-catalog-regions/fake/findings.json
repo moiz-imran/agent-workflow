@@ -1,0 +1,18 @@
+{
+  "findings": [
+    {
+      "path": "fingerprint.py",
+      "start_line": 7,
+      "end_line": 7,
+      "severity": "Blocking",
+      "title": "Regions are not part of the fingerprint, so a region-only change is reported unchanged and never stored. Adding them must keep the old fingerprint for listings with no regions.",
+      "evidence": "Regions are not part of the fingerprint, so a region-only change is reported unchanged and never stored. Adding them must keep the old fingerprint for listings with no regions."
+    }
+  ],
+  "covered": [
+    "listing.py",
+    "fingerprint.py",
+    "store.py"
+  ],
+  "not_covered": []
+}

@@ -1,0 +1,5 @@
+{
+  "kind": "review",
+  "summary": "Books gain series and tags, which must survive storage, partial updates and old rows.",
+  "change_message": "feat(books): store series and tags"
+}

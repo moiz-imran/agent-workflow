@@ -4,6 +4,7 @@
   preflight [--live]                 check tools and (with --live) isolated auth, without spending usage
   run --suite review|task|all        run trials; fake agents unless --live
   report <results-dir>               summarise results.jsonl as Markdown
+  judge <results-dir> [...]          blind A/B review of each task's single and workflow diffs
 
 Suites:
   review  A fresh Reader reviews a change with seeded bugs. Scores recall and false alarms.
@@ -25,6 +26,7 @@ import signal
 import statistics
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -39,6 +41,7 @@ import reader  # noqa: E402  (shared Codex flags and usage parsing)
 # Anything that could switch billing to an API key or leak a credential into a trial.
 SECRET = re.compile(r"API_KEY|TOKEN|SECRET|PASSWORD|^ANTHROPIC_|^OPENAI_|^AWS_|^GH_|^GITHUB_|^CLAUDE_|^CODEX_", re.I)
 PASS_THROUGH = {"CLAUDE_CODE_OAUTH_TOKEN"}
+ARMS = ("single", "review-only", "workflow")  # review-only: Builder + review loop, no map or decisions log
 TEST_LINE = re.compile(r"^(test\w*) \(([\w.]+)\)(?:\n.*?)? \.\.\. (ok|FAIL|ERROR|skipped.*|expected failure|unexpected success)$",
                        re.M)
 
@@ -50,9 +53,9 @@ def git(cwd, *args, env=None, check=True):
                           check=check).stdout.strip()
 
 
-def load_cases(suite, only=None):
+def load_cases(suite, only=None, root=CASES):
     cases = []
-    for d in sorted(CASES.iterdir()):
+    for d in sorted(Path(root).iterdir()):
         if (d / "case.json").exists():
             c = json.loads((d / "case.json").read_text())
             if suite in ("all", c["kind"]) and (not only or d.name in only):
@@ -63,7 +66,19 @@ def load_cases(suite, only=None):
 def stage(case, trial_dir):
     """Base commit (tagged `base`), the change under review on top for review cases, and a bare origin."""
     repo = trial_dir / "repo"
-    shutil.copytree(case["dir"] / "repo", repo)
+    src = case.get("git")  # {"mirror", "base", "head"}: a real repo's snapshots, without its history
+    if src:
+        repo.mkdir(parents=True)
+        export(src["mirror"], src["base"], repo)
+        for rel in src.get("visible", []):  # e.g. the PR author's own tests, which fix the interface
+            data = subprocess.run(["git", "-C", src["mirror"], "show", f"{src['visible_from']}:{rel}"],
+                                  capture_output=True, check=True).stdout
+            (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+            (repo / rel).write_bytes(data)
+        if (case["dir"] / "overlay").exists():  # case-specific edits on top, e.g. a visible test trimmed
+            shutil.copytree(case["dir"] / "overlay", repo, dirs_exist_ok=True)
+    else:
+        shutil.copytree(case["dir"] / "repo", repo)
     env = {**os.environ, "GIT_AUTHOR_NAME": "Eval", "GIT_AUTHOR_EMAIL": "eval@localhost",
            "GIT_COMMITTER_NAME": "Eval", "GIT_COMMITTER_EMAIL": "eval@localhost"}
     git(repo, "init", "-q", "-b", "main")
@@ -72,17 +87,35 @@ def stage(case, trial_dir):
     git(repo, "add", "-A")
     git(repo, "commit", "-qm", "base", env=env)
     git(repo, "tag", "base")
-    if (case["dir"] / "change").exists():
+    if src and src.get("head"):
+        for child in repo.iterdir():
+            if child.name != ".git":
+                shutil.rmtree(child) if child.is_dir() and not child.is_symlink() else child.unlink()
+        export(src["mirror"], src["head"], repo)
+        git(repo, "add", "-A")
+        git(repo, "commit", "-qm", case.get("change_message", "change under review"), env=env)
+    elif (case["dir"] / "change").exists():
         shutil.copytree(case["dir"] / "change", repo, dirs_exist_ok=True)
         for rel in case.get("delete", []):
             (repo / rel).unlink()
         git(repo, "add", "-A")
         git(repo, "commit", "-qm", case.get("change_message", "change under review"), env=env)
+    if case.get("setup"):  # e.g. a per-trial virtualenv; runs without credentials
+        r = subprocess.run(case["setup"], shell=True, cwd=trial_dir, capture_output=True, text=True,
+                           env={**clean_env(trial_dir / "setup-home"), "EVAL_TRIAL": str(trial_dir)})
+        if r.returncode:
+            raise RuntimeError(f"setup failed for {case['id']}: {r.stderr[-500:]}")
     origin = trial_dir / "origin.git"
     subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
     git(repo, "remote", "add", "origin", str(origin))
     git(repo, "push", "-q", "origin", "main")
     return repo
+
+
+def export(mirror, sha, dest):
+    """Write one commit's files into dest; only the snapshot travels, never the later history."""
+    archive = subprocess.run(["git", "-C", str(mirror), "archive", sha], capture_output=True, check=True).stdout
+    subprocess.run(["tar", "-x", "-C", str(dest)], input=archive, check=True)
 
 
 def child_env(trial_dir, args, ticket):
@@ -168,10 +201,14 @@ def review_trial(case, trial_dir, args):
     env = child_env(trial_dir, args, case["id"])
     rubric = (ROOT / "skills" / "review-rubric" / "SKILL.md").read_text()
     brief = f"Follow this skill.\n\n{rubric}\n\n---\n\n{(EVAL / 'arms' / 'review.md').read_text()}"
+    if case.get("title"):  # the PR title only: descriptions written at merge time can describe the fixes
+        brief += f"\nThe change's title: {case['title']}\n"
     result = trial_dir / "logs" / "findings.json"
     argv = reader.codex_argv(repo, "read-only", result, SCHEMA, env)
     status, seconds = run_proc(argv, repo, env, brief, args.minutes * 60,
                                trial_dir / "logs" / "codex.jsonl", trial_dir / "logs" / "codex.err")
+    if hit_usage_limit(trial_dir / "logs" / "codex.jsonl"):
+        return {"seconds": seconds, "status": "usage limit"}
     row = {"seconds": seconds, "status": status,
            "codex_usage": reader.usage_from_jsonl((trial_dir / "logs" / "codex.jsonl").read_text())}
     try:
@@ -210,8 +247,10 @@ def score_review(findings, gold, window=3, adjudicated=None):
     caught, dupes, unmatched = {}, 0, []
     for i, f in enumerate(findings):
         path = os.path.normpath(f["path"]).lstrip("./")
-        hits = [g for g in gold if g["path"] == path
-                and f["start_line"] <= g["end_line"] + window and f["end_line"] >= g["start_line"] - window]
+        # A bug can live in several places ("also": [{path, start_line, end_line}]); any of them counts.
+        hits = [g for g in gold if any(s["path"] == path and f["start_line"] <= s["end_line"] + window
+                                       and f["end_line"] >= s["start_line"] - window
+                                       for s in [g, *g.get("also", [])])]
         free = [g for g in hits if g["id"] not in caught]
         if free:
             caught[free[0]["id"]] = f["severity"]
@@ -239,12 +278,21 @@ def score_review(findings, gold, window=3, adjudicated=None):
 def task_trial(case, arm, trial_dir, args):
     repo = stage(case, trial_dir)
     env = child_env(trial_dir, args, case["id"])
+    if case.get("path"):  # tools the case needs, such as its virtualenv's python3
+        env["PATH"] = os.pathsep.join([*(str(trial_dir / d) for d in case["path"]), env["PATH"]])
     settings = trial_dir / "settings.json"
-    if arm == "workflow":
+    if arm in ("workflow", "review-only"):  # review-only: the same wiring, but only the review part of the workflow
+        role = ROOT / "templates" / "CLAUDE.md" if arm == "workflow" else EVAL / "arms" / "review-only.md"
+        no_human = ("No human is available during this run: record each decision you'd normally ask about in "
+                    "decisions.md with your reasoning, and continue." if arm == "workflow" else
+                    "No human is available during this run: make each judgement call yourself and continue.")
         system = (EVAL / "arms" / "workflow.md").read_text() \
-            .replace("__CLAUDE_MD__", (ROOT / "templates" / "CLAUDE.md").read_text()) \
+            .replace("__CLAUDE_MD__", role.read_text()).replace("__NO_HUMAN__", no_human) \
             .replace("__READER__", str(EVAL / "reader.py")).replace("__GATE__", str(GATE)) \
             .replace("__TICKET__", case["id"]).replace("__SCRATCH__", env["AGENT_WORKFLOW_SCRATCH"])
+        if arm == "workflow" and args.require_map:  # ablation: no skipping investigation as "small"
+            system += ("\n- This task is not small. Before writing code, have a read-only Reader investigate and "
+                       "return map.md, and record a decision in decisions.md for each NEEDS_BUILDER item.\n")
         settings.write_text(json.dumps({"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [
             {"type": "command", "command": f'python3 -I "{GATE}"', "timeout": 60}]}]}}))
         git(repo, "config", "review-gate.enabled", "true")
@@ -267,6 +315,8 @@ def task_trial(case, arm, trial_dir, args):
         status = "no result"
     elif status == "ok" and (result.get("is_error") or result.get("subtype") != "success"):
         status = f"agent stopped: {result.get('subtype')}"  # e.g. error_max_turns; still graded below
+    if hit_usage_limit(trial_dir / "logs" / "claude.jsonl", *(trial_dir / "logs").glob("reader-*.jsonl")):
+        status = "usage limit"  # not an agent result; the run stops after this trial
     row = {"seconds": seconds, "status": status, "claude": result, "reader_calls": reader_calls(trial_dir)}
     row["codex_usage"] = sum_usage(c.get("usage") for c in row["reader_calls"])
     if (trial_dir / "scratch").exists():
@@ -274,7 +324,7 @@ def task_trial(case, arm, trial_dir, args):
     row["tests"] = grade(case, repo, trial_dir)
     row["quality"] = quality(repo, args.quality_cmd)
     row["pushed"] = git(trial_dir / "origin.git", "rev-parse", "main") != git(repo, "rev-parse", "base")
-    if arm == "workflow":
+    if arm in ("workflow", "review-only"):
         row["rules"] = rules(trial_dir, repo, case["id"])
     return row
 
@@ -285,17 +335,38 @@ def sweep_readers(trial_dir):
         kill_group(int(pgid.read_text()), signal.SIGKILL)
 
 
+USAGE_LIMIT = re.compile(r"hit your [\w -]*limit", re.I)  # Claude and Codex both say "You've hit your ... limit"
+
+
+def hit_usage_limit(*logs):
+    return any(p.exists() and USAGE_LIMIT.search(p.read_text(errors="replace")) for p in logs)
+
+
 def claude_result(text):
-    """Fields from the final `result` event of a stream-json run; missing means unknown."""
-    for line in reversed(text.splitlines()):
+    """Fields from the final `result` event of a stream-json run; missing means unknown.
+
+    A run that resumes (e.g. after waiting on a background Reader) emits one `result` per segment.
+    Cost is cumulative, so the last one holds the total; `usage` is per segment, so it is summed.
+    """
+    results = []
+    for line in text.splitlines():
         try:
             e = json.loads(line)
         except ValueError:
             continue
-        if e.get("type") == "result":
-            return {k: e.get(k) for k in ("subtype", "is_error", "num_turns", "duration_ms",
-                                          "total_cost_usd", "usage", "modelUsage", "permission_denials")}
-    return None
+        if isinstance(e, dict) and e.get("type") == "result":
+            results.append(e)
+    if not results:
+        return None
+    last = results[-1]
+    row = {k: last.get(k) for k in ("subtype", "is_error", "num_turns", "duration_ms",
+                                    "total_cost_usd", "usage", "modelUsage", "permission_denials")}
+    usages = [e["usage"] for e in results if isinstance(e.get("usage"), dict)]
+    if usages:
+        row["usage"] = {k: sum(u.get(k) or 0 for u in usages) for k in usages[-1]
+                        if all(isinstance(u.get(k, 0), (int, float)) for u in usages)}
+    row["segments"] = len(results)
+    return row
 
 
 def reader_calls(trial_dir):
@@ -313,13 +384,28 @@ def sum_usage(usages):
     return total
 
 
-def unittest_results(cwd, command):
-    """({test id: outcome}, exit code) from verbose unittest output; ({}, code) if nothing ran."""
+def unittest_results(cwd, command, ids=None):
+    """({test id: outcome}, exit code) from verbose unittest output; ({}, code) if nothing ran.
+
+    With ids (pytest node ids), each id is "ok" when pytest -rA reported it, or every
+    parametrization of it, PASSED, and "fail" otherwise, including when it never ran.
+    """
     try:
         out = subprocess.run(command, shell=True, cwd=cwd, capture_output=True, text=True, timeout=300,
                              env=clean_env(Path(cwd).parent / f"{Path(cwd).name}-home"), start_new_session=True)
     except subprocess.TimeoutExpired:
         return {}, "timeout"
+    if ids:
+        ran = {}
+        for line in out.stdout.splitlines():
+            for tag in ("PASSED", "FAILED", "ERROR"):
+                if line.startswith(tag + " "):
+                    ran[line.split(" ", 1)[1].split(" - ")[0]] = tag
+        outcome = {}
+        for i in ids:
+            mine = [r for n, r in ran.items() if n == i or n.startswith(i + "[")]
+            outcome[i] = "ok" if mine and all(r == "PASSED" for r in mine) else "fail"
+        return outcome, out.returncode
     # Python 3.11+ prints "test_x (pkg.mod.Class.test_x)"; older versions omit the method name.
     return {m[1] if m[1].endswith("." + m[0]) else f"{m[1]}.{m[0]}": m[2]
             for m in TEST_LINE.findall(out.stderr + out.stdout)}, out.returncode
@@ -340,7 +426,8 @@ def grade(case, repo, trial_dir):
         else:  # the working tree as the agent left it, committed or not
             shutil.copytree(repo, copy, ignore=shutil.ignore_patterns(".git"))
         shutil.copytree(case["dir"] / "hidden", copy, dirs_exist_ok=True)
-        results[name] = unittest_results(copy, case["grade"])
+        results[name] = unittest_results(copy, case["grade"].replace("{trial}", str(trial_dir)),
+                                         case.get("hidden_ids"))
     (base, _), (after, after_exit) = results["base"], results["after"]
     if not base:
         raise RuntimeError(f"hidden tests didn't run on base for {case['id']}: fix the case")
@@ -421,7 +508,9 @@ def rules(trial_dir, repo, ticket):
         "reviews_read_only": all(c["sandbox"] == "read-only" for c in calls if c.get("skill") == "review-rubric"),
         # Small tasks skip the investigation map, so no map is "not applicable", not broken.
         "map_has_needs_builder": ("NEEDS_BUILDER" in read(scratch / "map.md")) if (scratch / "map.md").exists() else None,
-        "decisions_numbered": bool(re.search(r"(?m)^\W*D\d+\b", read(scratch / "decisions.md"))),
+        "map_made": (scratch / "map.md").exists(),
+        "decisions_numbered": bool(re.search(r"(?m)^\W*D\d+\b", read(scratch / "decisions.md")))
+        if (scratch / "decisions.md").exists() else None,
         "review_ledger": any("## Round" in f.read_text() for f in ledgers),
         "ledger_append_only": append_only,
         "outcomes_rows": bool(read(scratch / "outcomes.csv").strip()),
@@ -475,7 +564,7 @@ def run(args):
         sys.exit("Preflight failed; nothing was run.")
     out = Path(args.output) / time.strftime("%Y%m%d-%H%M%S")
     out.mkdir(parents=True)
-    cases = load_cases(args.suite, args.case)
+    cases = load_cases(args.suite, args.case, args.cases)
     if not cases:
         sys.exit("No matching cases.")
     rng = random.Random(args.seed)
@@ -483,7 +572,7 @@ def run(args):
     (out / "run.json").write_text(json.dumps({**meta, "started": time.strftime("%FT%T%z")}, indent=2))
     with open(out / "results.jsonl", "a") as results:
         for case in cases:
-            arms = ["review"] if case["kind"] == "review" else ["single", "workflow"]
+            arms = ["review"] if case["kind"] == "review" else [a for a in ARMS if a in (args.arm or ("single", "workflow"))]
             for trial in range(1, args.repeats + 1):
                 rng.shuffle(arms)  # random arm order per trial
                 for arm in arms:
@@ -502,6 +591,9 @@ def run(args):
                     results.write(json.dumps(row) + "\n")
                     results.flush()
                     print(f"  {row['status']}", flush=True)
+                    if row["status"] == "usage limit":
+                        sys.exit(f"Stopped: a subscription usage limit was hit. Results so far are in {out}; "
+                                 "rerun the remaining cases after it resets.")
                     if not args.keep:
                         shutil.rmtree(trial_dir / "home", ignore_errors=True)  # holds the auth copy
     print(out)
@@ -544,8 +636,10 @@ def report(args):
                "Codex tokens out | Est. cost $ | New lint issues |",
                "|---|---|---|---|---|---|---|---|---|---|---|"]
         for case in sorted({r["case"] for r in task}):
-            for arm in ("single", "workflow"):
+            for arm in ARMS:
                 rs = [r for r in task if r["case"] == case and r["arm"] == arm]
+                if not rs:
+                    continue
                 good = [r for r in rs if r.get("tests")]
                 md.append(
                     f"| {case} | {arm} | {sum(r['status'] == 'ok' for r in rs)}/{len(rs)} | "
@@ -558,7 +652,7 @@ def report(args):
                     f"{stat([(r.get('claude') or {}).get('total_cost_usd') for r in rs])} | "
                     f"{stat([(r.get('quality') or {}).get('new') for r in rs])} |")
         md.append("")
-        wf = [r for r in task if r["arm"] == "workflow" and r.get("rules")]
+        wf = [r for r in task if r.get("rules")]
         if wf:
             checks = list(wf[0]["rules"])
             md += ["## Workflow rules kept", "", "| Check | Kept | Broken | N/A or couldn't tell |", "|---|---|---|---|"]
@@ -574,6 +668,111 @@ def report(args):
     text = "\n".join(md)
     (Path(args.results) / "report.md").write_text(text)
     print(text)
+
+
+# ---------- blind A/B judge ----------
+
+TRIAL_DIR = re.compile(rf"^(.+)-({'|'.join(ARMS)})-(\d+)$")
+
+
+def change_diff(repo):
+    """Everything the agent changed against `base`: committed, staged, unstaged and untracked."""
+    with tempfile.TemporaryDirectory() as d:
+        env = {**os.environ, "GIT_INDEX_FILE": str(Path(d) / "index")}
+        git(repo, "read-tree", "HEAD", env=env)
+        git(repo, "add", "-A", env=env)
+        return git(repo, "diff", "--cached", "base", env=env)
+
+
+def parse_verdict(text):
+    m = re.search(r"\{.*\}", text or "", re.S)
+    try:
+        v = json.loads(m.group(0)) if m else None
+    except ValueError:
+        return None
+    return v if isinstance(v, dict) and isinstance(v.get("A"), list) and isinstance(v.get("B"), list) else None
+
+
+def unblind(verdict, order, arms=("single", "workflow")):
+    """order "fwd": A was arms[0], B arms[1]; "rev": the reverse."""
+    arm = dict(zip("AB", arms if order == "fwd" else arms[::-1]))
+    return {arm["A"]: verdict["A"], arm["B"]: verdict["B"],
+            "prefer": arm.get(verdict.get("prefer"), "tie"), "why": verdict.get("why")}
+
+
+def finished_trials(dirs, arms=("single", "workflow")):
+    """{(case, n): {arm: repo}} for trials of both arms that finished without a usage limit or harness error."""
+    pairs = {}
+    for d in dirs:
+        rows = [json.loads(line) for line in (d / "results.jsonl").read_text().splitlines()]
+        bad = {(r["case"], r["arm"], r["trial"]) for r in rows if r["status"] in ("usage limit", "harness error")}
+        for t in sorted(d.iterdir()):
+            m = TRIAL_DIR.match(t.name)
+            if m and m[2] in arms and (t / "repo").exists() and (m[1], m[2], int(m[3])) not in bad:
+                pairs.setdefault((m[1], int(m[3])), {}).setdefault(m[2], t / "repo")
+    return {k: v for k, v in pairs.items() if len(v) == 2}
+
+
+def judge(args):
+    """Blind A/B review of each case's diffs from two arms, twice with the labels swapped."""
+    dirs, arms = [Path(d) for d in args.results], tuple(args.arms)
+    cases = {c["id"]: c for c in load_cases("task", None, args.cases)}
+    pairs = {k: v for k, v in finished_trials(dirs, arms).items() if k[0] in cases}
+    if not pairs:
+        sys.exit(f"No case has a finished {arms[0]} and {arms[1]} trial with its repo.")
+    out = dirs[0] / ("judge" if arms == ("single", "workflow") else f"judge-{arms[0]}-vs-{arms[1]}")
+    out.mkdir(exist_ok=True)
+    template = (EVAL / "arms" / "judge.md").read_text()
+    rows = []
+    for (case_id, n), repos in sorted(pairs.items()):
+        diffs = {arm: change_diff(repo) for arm, repo in repos.items()}
+        ticket = (cases[case_id]["dir"] / "prompt.md").read_text()
+        with tempfile.TemporaryDirectory() as base:  # the code before either change, for context
+            export(repos[arms[0]], "base", base)
+            for order in ("fwd", "rev"):
+                a, b = (diffs[arms[0]], diffs[arms[1]]) if order == "fwd" else (diffs[arms[1]], diffs[arms[0]])
+                prompt = template.replace("__TICKET__", ticket).replace("__A__", a).replace("__B__", b)
+                log = out / f"{case_id}-{n}-{order}.json"
+                if args.live:
+                    home = out / "home"
+                    env = {**clean_env(home), "CLAUDE_CONFIG_DIR": str(home / ".claude"),
+                           "CLAUDE_CODE_OAUTH_TOKEN": os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")}
+                    argv = [shutil.which("claude") or "claude", "-p", "--output-format", "json",
+                            "--model", args.claude_model, "--effort", args.claude_effort, "--max-turns", "60",
+                            "--permission-mode", "dontAsk", "--allowedTools", "Read", "Glob", "Grep",
+                            "--setting-sources", "project", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}']
+                    status, _ = run_proc(argv, base, env, prompt, args.minutes * 60, log, out / "judge.err")
+                    if hit_usage_limit(log):
+                        sys.exit(f"Stopped: a usage limit was hit. Judged so far: {out}")
+                    try:
+                        meta = json.loads(log.read_text())
+                    except ValueError:
+                        meta = {}
+                else:  # fake: no defects, a tie; tests the plumbing only
+                    status, meta = "ok", {"result": '{"A": [], "B": [], "prefer": "tie", "why": "fake"}'}
+                verdict = parse_verdict(meta.get("result"))
+                row = {"case": case_id, "trial": n, "order": order, "status": status if verdict else "unparsed",
+                       "cost": meta.get("total_cost_usd"), **(unblind(verdict, order, arms) if verdict else {})}
+                rows.append(row)
+                print(f"{case_id} #{n} {order}: {row.get('prefer', row['status'])}", flush=True)
+    (out / "judge.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+
+    def count(r, arm, sev):
+        return sum(f.get("severity") == sev for f in r.get(arm, []))
+    x, y = arms
+    md = ["# Blind A/B judge", "", f"| Case | Trial | Order | {x} blocking / should-fix | "
+          f"{y} blocking / should-fix | Prefers |", "|---|---|---|---|---|---|"]
+    md += [f"| {r['case']} | {r['trial']} | {r['order']} | {count(r, x, 'blocking')} / "
+           f"{count(r, x, 'should_fix')} | {count(r, y, 'blocking')} / "
+           f"{count(r, y, 'should_fix')} | {r.get('prefer', r['status'])} |" for r in rows]
+    ok = [r for r in rows if "prefer" in r]
+    md += ["", f"Preferred: {y} {sum(r['prefer'] == y for r in ok)}, {x} "
+           f"{sum(r['prefer'] == x for r in ok)}, tie {sum(r['prefer'] == 'tie' for r in ok)} "
+           f"of {len(ok)} judgements. Defects are the judge's claims: check them before you cite them."]
+    if not args.live:
+        md.insert(1, "\n> Fake judge: these numbers test the harness, not the code.")
+    (out / "judge.md").write_text("\n".join(md) + "\n")
+    print("\n".join(md))
 
 
 def main():
@@ -596,6 +795,11 @@ def main():
     common(sp)
     sp.add_argument("--suite", choices=["review", "task", "all"], default="all")
     sp.add_argument("--case", action="append", help="only this case (repeatable)")
+    sp.add_argument("--cases", default=str(CASES), help="folder of cases, e.g. a private one outside the repo")
+    sp.add_argument("--arm", action="append", choices=ARMS,
+                    help="task cases: run this arm (repeatable; default single and workflow)")
+    sp.add_argument("--require-map", action="store_true",
+                    help="workflow arm: always start with a Reader investigation (ablation)")
     sp.add_argument("--repeats", type=int, default=3)
     sp.add_argument("--minutes", type=int, default=30, help="wall-clock limit per trial")
     sp.add_argument("--max-turns", type=int, default=80)
@@ -607,6 +811,14 @@ def main():
     sp = sub.add_parser("report")
     sp.add_argument("results")
     sp.set_defaults(func=report)
+    sp = sub.add_parser("judge", help="blind A/B review of two arms' diffs; pairs trials across result dirs")
+    common(sp)
+    sp.add_argument("--arms", nargs=2, choices=ARMS, default=["single", "workflow"], metavar="ARM",
+                    help="the two arms to compare (default: single workflow)")
+    sp.add_argument("results", nargs="+")
+    sp.add_argument("--cases", default=str(CASES))
+    sp.add_argument("--minutes", type=int, default=30, help="wall-clock limit per judgement")
+    sp.set_defaults(func=judge)
     args = p.parse_args()
     args.func(args)
 

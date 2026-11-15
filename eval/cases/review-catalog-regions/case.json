@@ -1,0 +1,5 @@
+{
+  "kind": "review",
+  "summary": "Catalog listings gain a Regions line; re-ingest must store region-only changes without touching unchanged listings.",
+  "change_message": "feat(listing): parse Regions line"
+}

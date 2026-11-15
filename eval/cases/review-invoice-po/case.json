@@ -1,0 +1,5 @@
+{
+  "kind": "review",
+  "summary": "API-created invoices need a purchase-order number; reconciled invoices have none and must keep working.",
+  "change_message": "feat(invoices): require purchase-order numbers"
+}

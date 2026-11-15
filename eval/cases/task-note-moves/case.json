@@ -1,0 +1,5 @@
+{
+  "kind": "task",
+  "summary": "Moving a note between folders becomes a versioned, evented change; an old public test pins the previous behaviour.",
+  "grade": "python3 -B -m unittest discover -s tests_hidden -v"
+}

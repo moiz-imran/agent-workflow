@@ -1,0 +1,18 @@
+{
+  "findings": [
+    {
+      "path": "service.py",
+      "start_line": 51,
+      "end_line": 58,
+      "severity": "Blocking",
+      "title": "update_book never normalises tags, so a partial update stores them untrimmed, mixed-case and duplicated.",
+      "evidence": "update_book never normalises tags, so a partial update stores them untrimmed, mixed-case and duplicated."
+    }
+  ],
+  "covered": [
+    "service.py",
+    "repository.py",
+    "api.py"
+  ],
+  "not_covered": []
+}

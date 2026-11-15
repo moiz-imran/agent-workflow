@@ -1,0 +1,10 @@
+[
+  {
+    "id": "G1",
+    "path": "fingerprint.py",
+    "start_line": 7,
+    "end_line": 7,
+    "severity": "Blocking",
+    "what": "Regions are not part of the fingerprint, so a region-only change is reported unchanged and never stored. Adding them must keep the old fingerprint for listings with no regions."
+  }
+]
