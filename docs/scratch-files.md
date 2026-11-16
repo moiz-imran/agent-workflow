@@ -4,8 +4,8 @@ Each task that goes through investigation, decisions and review gets one folder 
 
 | File | Written by | What it holds | Template |
 |---|---|---|---|
-| `map.md` | Reader | The investigation handoff: pinned base, `path:line` evidence, current behaviour, options with a recommendation, check commands, and a closing `NEEDS_BUILDER` list. | [map.md](../templates/map.md) |
-| `decisions.md` | Builder | Binding decisions `D1`, `D2`…, one per `NEEDS_BUILDER` item. Briefs cite them by number. | [decisions.md](../templates/decisions.md) |
+| `map.md` | Reader | The investigation handoff: pinned base, `path:line` evidence, current behaviour, options with a recommendation, check commands, and a closing `NEEDS_BUILDER` list. Skipped for a small task. | [map.md](../templates/map.md) |
+| `decisions.md` | Builder | Binding decisions `D1`, `D2`…, one per `NEEDS_BUILDER` item. Briefs cite them by number. Dropping or deferring a spec requirement needs the human's `Approved by user`. | [decisions.md](../templates/decisions.md) |
 | `<repo>-baseline.diff` | Review controller | `git diff --binary <base> -- .`, saved before each review round, so the round knows exactly what it reviewed. | — |
 | `<repo>-round-<n>.diff` | Review controller | The repair since the last reviewed snapshot: all a delta review reads besides the findings and the callers it touches. | — |
 | `<repo>-review-ledger.md` | Review controller | One section per round: snapshot, scope, coverage, findings `F1`, `F2`… with outcomes, repairs and checks. | [review-ledger.md](../templates/review-ledger.md) |

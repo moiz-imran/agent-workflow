@@ -9,7 +9,7 @@ You are a fresh, independent reviewer. You get the snapshot, the spec, the curre
 
 ## Before you start
 
-- Read the spec and `decisions.md`. The current answer for each decision is the one below any `SUPERSEDED` entry. Review against the current decisions, not against your own preference. If a decision looks wrong, say so as a separate note; it isn't a finding against the code.
+- Read the spec and `decisions.md`. The current answer for each decision is the one below any `SUPERSEDED` entry. Review against the current decisions, not against your own preference. If a decision looks wrong, say so as a separate note; it isn't a finding against the code. The exception is scope: a spec requirement that is missing or narrowed is Blocking, even when a decision defers it, unless that entry says `Approved by user`.
 - Load the standards doc from the path and revision in the brief. Each of its rules is marked Required or Advisory. If no standards doc is given, use only the axes below.
 - Confirm the snapshot: base, HEAD, and the in-scope file list. Read every in-scope file. If you can't, report which ones you missed; partial coverage is never reported as complete.
 

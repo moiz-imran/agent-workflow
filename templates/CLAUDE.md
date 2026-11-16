@@ -16,8 +16,8 @@ Claude Code is the **Builder**: it owns the work and writes the substantive code
 
 For any task that goes through investigation, decisions and review, keep one folder outside every repo: `/tmp/<ticket>/`. Never commit it or link to it from tickets or PRs. File formats are in `docs/scratch-files.md` of the agent-workflow repo.
 
-- `map.md`: the Reader's investigation handoff. Pinned base SHAs, `path:line` evidence, current behaviour, options with a recommendation, exact check commands. Ends with a `NEEDS_BUILDER` list.
-- `decisions.md`: the Builder's binding decisions, `D1`, `D2`…, one per `NEEDS_BUILDER` item. When a decision changes, mark the old entry `SUPERSEDED` and put the current answer directly below it. Review findings use `F` numbers.
+- `map.md`: skip it for a small task (one repo, the Builder can name the files to change and the check commands from the spec and a quick read, and there is no open question); put base, scope and checks straight into the briefs instead. Otherwise it is the Reader's investigation handoff. Pinned base SHAs, `path:line` evidence, current behaviour, options with a recommendation, exact check commands. Ends with a `NEEDS_BUILDER` list.
+- `decisions.md`: the Builder's binding decisions, `D1`, `D2`…, one per `NEEDS_BUILDER` item. A decision that drops, defers or narrows a spec requirement is the human's call: ask first and write `Approved by user <date>` in the entry. When a decision changes, mark the old entry `SUPERSEDED` and put the current answer directly below it. Review findings use `F` numbers.
 - `<repo>-baseline.diff`: `git diff --binary <base> -- .`, saved before each review round.
 - `<repo>-review-ledger.md`: one per repo, appended every round.
 - `outcomes.csv`: one row per review round, no header.
